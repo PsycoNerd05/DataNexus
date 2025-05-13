@@ -106,4 +106,4 @@ A common scenario for such a project is an employee management system:
 | Networking     | Retrofit           | HTTP client for Android to call REST API     |
 
 
-DataNexus exemplifies a modern, modular client-server architecture where an Android app communicates with a Java Spring Boot backend over RESTful APIs. This structure is widely used for scalable, cross-device applications where data consistency and centralized management are essential[4][5][7].
+DataNexus exemplifies a modern, modular client-server architecture where an Android app communicates with a Java Spring Boot backend over RESTful APIs. This structure is widely used for scalable, cross-device applications where data consistency and centralized management are essential.
