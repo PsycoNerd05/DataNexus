@@ -1,31 +1,56 @@
 DataNexus/
-│
-├── android/
-│   ├── app/
-│   │   ├── src/
-│   │   │   ├── main/
-│   │   │   │   ├── AndroidManifest.xml
-│   │   │   │   ├── java/
-│   │   │   │   │   └── MainActivity.java
-│   │   │   │   └── res/
-│   │   │   │       ├── layout/activity_main.xml
-│   │   │   │       ├── values/colors.xml
-│   │   │   │       ├── drawable/edit_text_border.xml
-│   │   │   │       ├── xml/network_security_config.xml
-│   │   │   │       └── values/themes.xml
-│
-├── server/
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/com/example/datanexus/
-│   │   │   │   ├── DatanexusBackendApplication.java
-│   │   │   │   ├── DataEntryRepository.java
-│   │   │   │   ├── FileStorageService.java
-│   │   │   │   ├── FileUploadController.java
-│   │   │   │   └── DataEntry.java
-│   │   │   └── resources/
-│   │   │       └── application.properties
 
+│
+
+├── android/
+
+│   ├── app/
+
+│   │   ├── src/
+
+│   │   │   ├── main/
+
+│   │   │   │   ├── AndroidManifest.xml
+
+│   │   │   │   ├── java/
+
+│   │   │   │   │   └── MainActivity.java
+
+│   │   │   │   └── res/
+
+│   │   │   │       ├── layout/activity_main.xml
+
+│   │   │   │       ├── values/colors.xml
+
+│   │   │   │       ├── drawable/edit_text_border.xml
+
+│   │   │   │       ├── xml/network_security_config.xml
+
+│   │   │   │       └── values/themes.xml
+
+│
+
+├── server/
+
+│   ├── src/
+
+│   │   ├── main/
+
+│   │   │   ├── java/com/example/datanexus/
+
+│   │   │   │   ├── DatanexusBackendApplication.java
+
+│   │   │   │   ├── DataEntryRepository.java
+
+│   │   │   │   ├── FileStorageService.java
+
+│   │   │   │   ├── FileUploadController.java
+
+│   │   │   │   └── DataEntry.java
+
+│   │   │   └── resources/
+
+│   │   │       └── application.properties
 
 
 ## DataNexus Project Explanation
