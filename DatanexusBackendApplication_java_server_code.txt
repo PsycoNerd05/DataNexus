@@ -1,0 +1,18 @@
+package com.datanexus.datanexus_backend;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication // Standard Spring Boot annotation
+public class DatanexusBackendApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(DatanexusBackendApplication.class, args);
+		System.out.println("\n--- Data Nexus Backend Application Started ---");
+		System.out.println("Listening for requests on configured port (check application.properties)...");
+		System.out.println("Ensure MySQL is running and accessible.");
+		System.out.println("Ensure upload directory exists and is writable.");
+		System.out.println("----------------------------------------------\n");
+	}
+
+}

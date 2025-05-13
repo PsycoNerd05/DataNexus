@@ -1,0 +1,893 @@
+package com.example.datanexus;
+
+// AndroidX & Google Material Imports
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
+import androidx.camera.core.Preview;
+import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.video.MediaStoreOutputOptions;
+import androidx.camera.video.PendingRecording;
+import androidx.camera.video.Quality;
+import androidx.camera.video.QualitySelector;
+import androidx.camera.video.Recorder;
+import androidx.camera.video.Recording;
+import androidx.camera.video.VideoCapture;
+import androidx.camera.video.VideoRecordEvent;
+import androidx.camera.view.PreviewView;
+import androidx.constraintlayout.widget.ConstraintLayout; // If using ConstraintLayout directly
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.core.util.Consumer;
+
+// Android OS & Util Imports
+import android.Manifest;
+import android.content.ContentResolver;
+import android.content.ContentValues;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
+import android.media.MediaRecorder;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.MediaStore;
+import android.provider.OpenableColumns;
+import android.util.Log;
+import android.view.View;
+import android.webkit.MimeTypeMap;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import android.widget.Toast;
+import com.google.android.material.switchmaterial.SwitchMaterial;
+import com.google.common.util.concurrent.ListenableFuture;
+
+// Java IO & Net Imports
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class MainActivity extends AppCompatActivity {
+
+    // --- Constants ---
+    private static final String TAG = "MainActivity_DN";
+    // !!! IMPORTANT: REPLACE WITH YOUR LAPTOP'S ACTUAL IP ADDRESS AND SERVER PORT !!!
+    private static final String UPLOAD_URL = "http://192.168.232.152:8080/upload"; // Example only
+    private static final int PERMISSIONS_REQUEST_CODE = 11;
+    private static final String FILENAME_FORMAT = "yyyyMMdd_HHmmss";
+    private static final String TEXT_FILE_PREFIX = "DataNexus_Text_";
+    private static final String AUDIO_FILE_PREFIX = "DataNexus_Audio_";
+    private static final String IMAGE_FILE_PREFIX = "DataNexus_Image_";
+    private static final String VIDEO_FILE_PREFIX = "DataNexus_Video_";
+
+    // --- Permissions ---
+    private static final String[] REQUIRED_PERMISSIONS = {
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.INTERNET
+            // Conditionally add storage permission if needed (e.g., target API <= 28 for MediaRecorder)
+            ,(Build.VERSION.SDK_INT <= Build.VERSION_CODES.P ? Manifest.permission.WRITE_EXTERNAL_STORAGE : null)
+    };
+
+    // --- UI Elements ---
+    private PreviewView previewView;
+    private ImageButton buttonCaptureImage;
+    private ImageButton buttonStartVideo; // Will act as Start/Stop toggle
+    private ImageButton buttonRecordAudio; // Will act as Start/Stop toggle
+    private SwitchMaterial switchVideoAudio;
+    private EditText editTextTextInput;
+    private Button buttonSendText;
+    private TextView textViewStatus;
+    private ProgressBar progressBarUpload;
+
+    // --- CameraX ---
+    private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
+    @Nullable private ImageCapture imageCapture;
+    @Nullable private VideoCapture<Recorder> videoCapture;
+    @Nullable private Recording activeVideoRecording;
+    private boolean isRecordingVideo = false;
+
+    // --- MediaRecorder for Standalone Audio ---
+    @Nullable private MediaRecorder mediaRecorder;
+    @Nullable private File currentAudioFile;
+    private boolean isRecordingAudio = false;
+
+    // --- Executors & Handlers ---
+    private final ExecutorService cameraExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService fileExecutor = Executors.newSingleThreadExecutor(); // For file IO (text, audio stop)
+    private final ExecutorService uploadExecutor = Executors.newSingleThreadExecutor();
+    private final Handler mainThreadHandler = new Handler(Looper.getMainLooper());
+
+    // --- Activity Lifecycle ---
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        Log.d(TAG, "onCreate called");
+
+        findViews();
+        setupListeners();
+        checkAndRequestPermissions();
+        updateUIState(); // Initial UI state
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        Log.d(TAG, "onDestroy called");
+        releaseMediaRecorder(); // Release MediaRecorder if active
+        // CameraX lifecycle binding should handle camera release, but shutdown executor
+        shutdownExecutor(cameraExecutor, "CameraExecutor");
+        shutdownExecutor(fileExecutor, "FileExecutor");
+        shutdownExecutor(uploadExecutor, "UploadExecutor");
+    }
+
+    // --- Initialization & Permissions ---
+
+    private void findViews() {
+        previewView = findViewById(R.id.preview_view);
+        buttonCaptureImage = findViewById(R.id.button_capture_image);
+        buttonStartVideo = findViewById(R.id.button_start_video);
+        switchVideoAudio = findViewById(R.id.switch_video_audio);
+        buttonRecordAudio = findViewById(R.id.button_record_audio);
+        editTextTextInput = findViewById(R.id.edittext_text_input);
+        buttonSendText = findViewById(R.id.button_send_text);
+        textViewStatus = findViewById(R.id.textview_status);
+        progressBarUpload = findViewById(R.id.progress_bar_upload);
+    }
+
+    private void setupListeners() {
+        buttonCaptureImage.setOnClickListener(v -> captureImage());
+        buttonStartVideo.setOnClickListener(v -> toggleVideoRecording());
+        buttonRecordAudio.setOnClickListener(v -> toggleAudioRecording());
+        buttonSendText.setOnClickListener(v -> handleSendText());
+    }
+
+    private void checkAndRequestPermissions() {
+        if (!allPermissionsGranted()) {
+            ActivityCompat.requestPermissions(this, getRequiredPermissionsArray(), PERMISSIONS_REQUEST_CODE);
+            updateStatus("Requesting permissions...");
+        } else {
+            Log.i(TAG, "All permissions already granted.");
+            startCamera(); // Permissions already granted
+        }
+    }
+
+    private String[] getRequiredPermissionsArray() {
+        ArrayList<String> permissions = new ArrayList<>();
+        for (String p : REQUIRED_PERMISSIONS) {
+            if (p != null) permissions.add(p); // Filter out nulls
+        }
+        return permissions.toArray(new String[0]);
+    }
+
+    private boolean allPermissionsGranted() {
+        for (String permission : getRequiredPermissionsArray()) {
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSIONS_REQUEST_CODE) {
+            if (allPermissionsGranted()) {
+                Log.i(TAG, "Permissions granted after request.");
+                startCamera();
+            } else {
+                Log.e(TAG, "Permissions not granted by the user.");
+                Toast.makeText(this, "Permissions not granted. App functionality will be limited.", Toast.LENGTH_LONG).show();
+                updateStatus("Permissions needed for camera/audio.");
+                // Disable features requiring permissions
+                updateUIState();
+            }
+        }
+    }
+
+    // --- CameraX Implementation ---
+
+    private void startCamera() {
+        updateStatus("Starting camera...");
+        cameraProviderFuture = ProcessCameraProvider.getInstance(this);
+        cameraProviderFuture.addListener(() -> {
+            try {
+                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+                bindCameraUseCases(cameraProvider);
+                Log.i(TAG, "Camera started successfully.");
+                updateStatus("Ready");
+            } catch (ExecutionException | InterruptedException e) {
+                Log.e(TAG, "Failed to get CameraProvider", e);
+                updateStatus("Camera failed to start");
+                mainThreadHandler.post(() -> Toast.makeText(this, "Error starting camera", Toast.LENGTH_SHORT).show());
+            }
+            updateUIState(); // Update UI based on camera state
+        }, ContextCompat.getMainExecutor(this));
+    }
+
+    private void bindCameraUseCases(@NonNull ProcessCameraProvider cameraProvider) {
+        // --- Preview ---
+        Preview preview = new Preview.Builder().build();
+        preview.setSurfaceProvider(previewView.getSurfaceProvider());
+
+        // --- Image Capture ---
+        imageCapture = new ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY) // Or MAXIMIZE_QUALITY
+                .build();
+
+        // --- Video Capture ---
+        Recorder recorder = new Recorder.Builder()
+                .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
+                .build();
+        videoCapture = VideoCapture.withOutput(recorder);
+
+        // --- Camera Selector ---
+        CameraSelector cameraSelector = new CameraSelector.Builder()
+                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                .build();
+
+        try {
+            cameraProvider.unbindAll(); // Unbind previous use cases
+            cameraProvider.bindToLifecycle(
+                    this, cameraSelector, preview, imageCapture, videoCapture); // Bind all use cases
+            Log.i(TAG, "Camera use cases bound.");
+        } catch (Exception e) {
+            Log.e(TAG, "Use case binding failed", e);
+            updateStatus("Camera binding failed");
+            mainThreadHandler.post(() -> Toast.makeText(this, "Could not bind camera use cases.", Toast.LENGTH_SHORT).show());
+        }
+    }
+
+    private void captureImage() {
+        if (imageCapture == null || isRecordingVideo || isRecordingAudio) {
+            Log.w(TAG, "Cannot capture image. State: imageCapture=" + (imageCapture != null) + ", recordingVideo=" + isRecordingVideo + ", recordingAudio=" + isRecordingAudio);
+            Toast.makeText(this, "Cannot capture image now", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Log.i(TAG, "Attempting to capture image...");
+
+        // Create MediaStore entry for the image
+        long timestamp = System.currentTimeMillis();
+        String name = IMAGE_FILE_PREFIX + new SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(timestamp);
+        ContentValues contentValues = new ContentValues();
+        contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            contentValues.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + File.separator + "DataNexusApp");
+        }
+
+        ImageCapture.OutputFileOptions outputOptions = new ImageCapture.OutputFileOptions.Builder(
+                getContentResolver(),
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                contentValues)
+                .build();
+
+        updateStatus("Capturing image...");
+        imageCapture.takePicture(outputOptions, ContextCompat.getMainExecutor(this), // Use main executor for callback
+                new ImageCapture.OnImageSavedCallback() {
+                    @Override
+                    public void onImageSaved(@NonNull ImageCapture.OutputFileResults outputFileResults) {
+                        Uri savedUri = outputFileResults.getSavedUri();
+                        Log.i(TAG, "Image saved successfully: " + savedUri);
+                        updateStatus("Image captured. Uploading...");
+                        Toast.makeText(MainActivity.this,"Image Saved: " + getFileName(savedUri), Toast.LENGTH_SHORT).show();
+                        uploadFile(savedUri);
+                    }
+
+                    @Override
+                    public void onError(@NonNull ImageCaptureException exception) {
+                        Log.e(TAG, "Image capture failed: ", exception);
+                        updateStatus("Image capture failed");
+                        Toast.makeText(MainActivity.this,"Image capture failed: " + exception.getMessage(), Toast.LENGTH_SHORT).show();
+                        updateUIState(); // Reset UI state if needed
+                    }
+                });
+        updateUIState(); // Update UI to show capturing state? (Maybe disable buttons briefly)
+    }
+
+
+    private void toggleVideoRecording() {
+        if (videoCapture == null) return;
+
+        if (isRecordingVideo) {
+            stopVideoRecording();
+        } else {
+            if(isRecordingAudio) { // Prevent starting video if audio recording is active
+                Toast.makeText(this, "Stop audio recording first", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            startVideoRecording();
+        }
+    }
+
+    private void startVideoRecording() {
+        if (activeVideoRecording != null) return; // Already recording? Should be handled by isRecordingVideo flag
+
+        Log.i(TAG, "Starting video recording...");
+        long timestamp = System.currentTimeMillis();
+        String name = VIDEO_FILE_PREFIX + new SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(timestamp);
+        ContentValues contentValues = new ContentValues();
+        contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            contentValues.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + File.separator + "DataNexusApp");
+        }
+
+        MediaStoreOutputOptions outputOptions = new MediaStoreOutputOptions.Builder(
+                getContentResolver(), MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                .setContentValues(contentValues)
+                .build();
+
+        boolean enableAudio = switchVideoAudio.isChecked();
+
+        // Configure Recorder and start recording
+        PendingRecording pendingRecording = videoCapture.getOutput()
+                .prepareRecording(this, outputOptions);
+        if (enableAudio) {
+            // Check for audio permission explicitly before enabling
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                pendingRecording.withAudioEnabled();
+                Log.i(TAG,"Audio enabled for video recording.");
+            } else {
+                Log.w(TAG, "Audio permission not granted, cannot enable audio for video.");
+                Toast.makeText(this, "Audio permission needed to record audio with video", Toast.LENGTH_SHORT).show();
+            }
+        } else {
+            Log.i(TAG,"Audio disabled for video recording.");
+        }
+
+
+        activeVideoRecording = pendingRecording.start(ContextCompat.getMainExecutor(this), videoRecordEventConsumer);
+        isRecordingVideo = true;
+        updateUIState(); // Update buttons etc.
+        updateStatus("Recording video...");
+    }
+
+    private void stopVideoRecording() {
+        if (activeVideoRecording != null) {
+            Log.i(TAG, "Stopping video recording...");
+            activeVideoRecording.stop();
+            // State change (isRecordingVideo=false) and UI update will happen in the onFinalize callback
+            updateStatus("Stopping video...");
+        }
+    }
+
+    // --- Listener for Video Recording Events ---
+    private final Consumer<VideoRecordEvent> videoRecordEventConsumer = event -> {
+        if (event instanceof VideoRecordEvent.Start) {
+            Log.d(TAG,"VideoRecordEvent.Start");
+            updateStatus("Recording video..."); // Redundant? Maybe show duration later.
+
+        } else if (event instanceof VideoRecordEvent.Finalize) {
+            VideoRecordEvent.Finalize finalizeEvent = (VideoRecordEvent.Finalize) event;
+            Uri outputUri = finalizeEvent.getOutputResults().getOutputUri();
+            int error = finalizeEvent.getError();
+            Log.i(TAG, "VideoRecordEvent.Finalize. Error: " + error + ", URI: " + outputUri);
+
+            isRecordingVideo = false; // Update state flag *here*
+            activeVideoRecording = null; // Clear reference
+
+            if (error == VideoRecordEvent.Finalize.ERROR_NONE) {
+                updateStatus("Video saved. Uploading...");
+                Toast.makeText(this,"Video Saved: " + getFileName(outputUri), Toast.LENGTH_SHORT).show();
+                uploadFile(outputUri);
+            } else {
+                String errorMsg = "Video recording failed: Error Code " + error;
+                Log.e(TAG, errorMsg, finalizeEvent.getCause());
+                updateStatus("Video recording failed");
+                Toast.makeText(this, errorMsg, Toast.LENGTH_LONG).show();
+            }
+            updateUIState(); // Update UI now that recording is finished
+        }
+        // Handle other events like Pause, Resume if needed
+    };
+
+
+    // --- Standalone Audio Recording (MediaRecorder) ---
+
+    private void toggleAudioRecording() {
+        if (isRecordingAudio) {
+            stopAudioRecording();
+        } else {
+            if(isRecordingVideo) { // Prevent starting audio if video recording is active
+                Toast.makeText(this, "Stop video recording first", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            startAudioRecording();
+        }
+    }
+
+
+    private void startAudioRecording() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "Audio permission needed", Toast.LENGTH_SHORT).show();
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, PERMISSIONS_REQUEST_CODE);
+            return;
+        }
+
+        currentAudioFile = createAudioFile();
+        if (currentAudioFile == null) {
+            Toast.makeText(this, "Could not create audio file", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        mediaRecorder = new MediaRecorder(); // Use specific API version if targeting older devices MediaRecorder(context)
+        mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+        mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.AAC_ADTS); // Or THREE_GPP, MPEG_4
+        mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC); // Or AMR_NB, AAC_ELD
+        mediaRecorder.setOutputFile(currentAudioFile.getAbsolutePath());
+
+        try {
+            mediaRecorder.prepare();
+            mediaRecorder.start();
+            isRecordingAudio = true;
+            Log.i(TAG, "Started audio recording to: " + currentAudioFile.getAbsolutePath());
+            updateStatus("Recording audio...");
+            updateUIState();
+        } catch (IOException | IllegalStateException e) {
+            Log.e(TAG, "MediaRecorder start failed", e);
+            Toast.makeText(this, "Failed to start audio recording", Toast.LENGTH_SHORT).show();
+            releaseMediaRecorder(); // Clean up on failure
+            isRecordingAudio = false;
+            currentAudioFile = null;
+            updateStatus("Audio recording failed to start");
+            updateUIState();
+        }
+    }
+
+    private void stopAudioRecording() {
+        if (mediaRecorder != null && isRecordingAudio) {
+            updateStatus("Stopping audio...");
+            try {
+                mediaRecorder.stop();
+                Log.i(TAG, "Stopped audio recording.");
+                Uri audioUri = Uri.fromFile(currentAudioFile); // Get URI from the saved file
+                updateStatus("Audio saved. Uploading...");
+                Toast.makeText(this,"Audio Saved: " + getFileName(audioUri), Toast.LENGTH_SHORT).show();
+                uploadFile(audioUri); // Upload the completed file
+
+            } catch (RuntimeException stopException) {
+                // Handle exceptions like stop() called after error state
+                Log.e(TAG, "MediaRecorder stop failed", stopException);
+                updateStatus("Audio stop failed");
+                Toast.makeText(this, "Failed to properly stop recording", Toast.LENGTH_SHORT).show();
+                // Attempt to delete potentially corrupted file?
+                if (currentAudioFile != null && currentAudioFile.exists()) {
+                    // currentAudioFile.delete(); // Optional cleanup
+                }
+            } finally {
+                releaseMediaRecorder();
+                isRecordingAudio = false;
+                // Keep currentAudioFile reference for upload
+                updateUIState(); // Update UI after stopping (successful or not)
+            }
+        } else {
+            // Should not happen if state is managed correctly, but handle anyway
+            releaseMediaRecorder(); // Ensure cleanup if state is inconsistent
+            isRecordingAudio = false;
+            updateUIState();
+        }
+    }
+
+    private void releaseMediaRecorder() {
+        if (mediaRecorder != null) {
+            try {
+                if(isRecordingAudio) { // Check if it was recording before releasing
+                    mediaRecorder.stop(); // Try to stop if not already stopped
+                    isRecordingAudio = false; // Update state if stopped here
+                    Log.w(TAG, "MediaRecorder stopped during release");
+                }
+                mediaRecorder.reset(); // Reset its state
+                mediaRecorder.release(); // Release resources
+                mediaRecorder = null;
+                Log.i(TAG, "MediaRecorder released.");
+            } catch (Exception e) {
+                Log.e(TAG, "Error releasing MediaRecorder", e);
+            }
+        }
+        // Don't nullify currentAudioFile here if stopAudioRecording intends to upload it
+    }
+
+    private File createAudioFile() {
+        try {
+            String timeStamp = new SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis());
+            String fileName = AUDIO_FILE_PREFIX + timeStamp;
+            File storageDir = getExternalFilesDir(Environment.DIRECTORY_MUSIC); // App-specific external storage
+            if (storageDir != null && !storageDir.exists()){
+                storageDir.mkdirs(); // Create directory if it doesn't exist
+            }
+            // Use .aac extension matching the encoder
+            File audioFile = new File(storageDir, fileName + ".aac");
+            Log.d(TAG, "Creating audio file at: " + audioFile.getAbsolutePath());
+            return audioFile;
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating audio file", e);
+            return null;
+        }
+    }
+
+    // --- Text Input Handling ---
+
+    private void handleSendText() {
+        String textToSend = editTextTextInput.getText().toString().trim();
+        if (textToSend.isEmpty()) {
+            Toast.makeText(this, "Text field is empty", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if(isRecordingAudio || isRecordingVideo) {
+            Toast.makeText(this, "Stop recording before sending text", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        updateStatus("Saving text to file...");
+        // Save text to file in background
+        fileExecutor.execute(() -> {
+            File textFile = createTextFile(textToSend);
+            if (textFile != null && textFile.exists()) {
+                Uri textFileUri = Uri.fromFile(textFile); // Get URI from the saved file
+                Log.i(TAG, "Text saved to file: " + textFile.getName());
+                mainThreadHandler.post(()-> {
+                    updateStatus("Text saved. Uploading...");
+                    uploadFile(textFileUri);
+                    editTextTextInput.setText(""); // Clear input field on success
+                });
+            } else {
+                Log.e(TAG, "Failed to create or save text file.");
+                mainThreadHandler.post(()-> {
+                    updateStatus("Failed to save text");
+                    Toast.makeText(MainActivity.this, "Error saving text file", Toast.LENGTH_SHORT).show();
+                });
+            }
+            mainThreadHandler.post(this::updateUIState); // Update UI after background task
+        });
+        updateUIState(); // Update UI immediately (e.g., disable button during processing)
+    }
+
+    private File createTextFile(String content) {
+        try {
+            String timeStamp = new SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis());
+            String fileName = TEXT_FILE_PREFIX + timeStamp + ".txt";
+            // Save to app-specific cache directory or files directory
+            File storageDir = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS); // Or getCacheDir()
+            if (storageDir != null && !storageDir.exists()){
+                storageDir.mkdirs();
+            }
+            File textFile = new File(storageDir, fileName);
+
+            // Write text content to the file
+            FileOutputStream fos = new FileOutputStream(textFile);
+            OutputStreamWriter writer = new OutputStreamWriter(fos);
+            writer.write(content);
+            writer.close();
+            fos.close();
+
+            Log.d(TAG, "Creating text file at: " + textFile.getAbsolutePath());
+            return textFile;
+
+        } catch (IOException e) {
+            Log.e(TAG, "Error creating text file", e);
+            return null;
+        }
+    }
+
+    // --- UI State Management ---
+
+    private void updateUIState() {
+        mainThreadHandler.post(() -> { // Ensure UI updates are on the main thread
+            boolean enableCameraActions = allPermissionsGranted() && !isRecordingAudio && !isRecordingVideo;
+            boolean enableAudioActions = allPermissionsGranted() && !isRecordingVideo; // Allow stopping audio during preview
+            boolean enableTextActions = !isRecordingAudio && !isRecordingVideo;
+
+            // Camera Buttons
+            buttonCaptureImage.setEnabled(enableCameraActions);
+            buttonCaptureImage.setAlpha(enableCameraActions ? 1.0f : 0.5f);
+
+            // Video Button (acts as toggle)
+            buttonStartVideo.setEnabled(enableCameraActions || isRecordingVideo); // Can always stop
+            buttonStartVideo.setAlpha((enableCameraActions || isRecordingVideo) ? 1.0f : 0.5f);
+            // Change icon based on state (requires different drawables)
+            buttonStartVideo.setImageResource(isRecordingVideo ? android.R.drawable.presence_video_busy : android.R.drawable.presence_video_online); // Example icons
+            switchVideoAudio.setEnabled(!isRecordingVideo); // Can only change before recording
+
+            // Audio Button (acts as toggle)
+            buttonRecordAudio.setEnabled(enableAudioActions);
+            buttonRecordAudio.setAlpha(enableAudioActions ? 1.0f : 0.5f);
+            // Change icon based on state
+            buttonRecordAudio.setImageResource(isRecordingAudio ? android.R.drawable.ic_media_pause : android.R.drawable.ic_btn_speak_now); // Example icons
+
+
+            // Text Input
+            editTextTextInput.setEnabled(enableTextActions);
+            buttonSendText.setEnabled(enableTextActions);
+            buttonSendText.setAlpha(enableTextActions ? 1.0f : 0.5f);
+
+            // Disable everything during upload? (Handled in uploadFile method)
+        });
+    }
+
+    private void updateStatus(String message) {
+        Log.d(TAG, "Status: " + message);
+        mainThreadHandler.post(() -> {
+            if (textViewStatus != null) {
+                textViewStatus.setText("Status: " + message);
+            }
+        });
+    }
+
+
+    // --- File Upload Logic (Reused and slightly adapted) ---
+
+    private void uploadFile(final Uri fileUri) {
+        if (fileUri == null) {
+            Log.e(TAG, "Cannot upload null file URI.");
+            updateStatus("Upload Error: Invalid file");
+            updateUIState(); // Re-enable UI
+            return;
+        }
+
+        mainThreadHandler.post(() -> {
+            updateStatus("Uploading: " + getFileName(fileUri));
+            progressBarUpload.setVisibility(View.VISIBLE);
+            // Disable interaction during upload
+            buttonCaptureImage.setEnabled(false);
+            buttonStartVideo.setEnabled(false);
+            switchVideoAudio.setEnabled(false);
+            buttonRecordAudio.setEnabled(false);
+            editTextTextInput.setEnabled(false);
+            buttonSendText.setEnabled(false);
+        });
+
+        uploadExecutor.execute(() -> {
+
+
+            HttpURLConnection conn = null;
+            DataOutputStream dos = null;
+            InputStream fileInputStream = null;
+            final String lineEnd = "\r\n";
+            final String twoHyphens = "--";
+            final String boundary = "*****" + Long.toString(System.currentTimeMillis()) + "*****";
+            final int maxBufferSize = 1 * 1024 * 1024; // 1MB buffer
+
+            String fileName = getFileName(fileUri);
+            String mimeType = getMimeType(fileUri); // Determine MIME type
+            Log.i(TAG, "Starting upload for: " + fileName + " (" + mimeType + ") from URI: " + fileUri);
+
+            try {
+                fileInputStream = getContentResolver().openInputStream(fileUri);
+                if (fileInputStream == null) {
+                    // If content resolver fails, try direct file access (for files created by the app like audio/text)
+                    if ("file".equals(fileUri.getScheme())) {
+                        try {
+                            fileInputStream = new FileInputStream(new File(fileUri.getPath()));
+                        } catch (Exception fileEx) {
+                            Log.e(TAG, "Failed to open file stream directly after content resolver failed", fileEx);
+                            throw new FileNotFoundException("Could not open input stream for URI: " + fileUri);
+                        }
+                    } else {
+                        throw new FileNotFoundException("Could not open input stream for content URI: " + fileUri);
+                    }
+                }
+
+
+
+                URL url = new URL(UPLOAD_URL);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setDoInput(true);
+                conn.setDoOutput(true);
+                conn.setUseCaches(false);
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Connection", "Keep-Alive");
+               // conn.setRequestProperty("ENCTYPE", "multipart/form-data");
+                conn.setRequestProperty("Content-Type", "multipart/form-data;boundary=" + boundary);
+                conn.setChunkedStreamingMode(0); // Use default chunk length
+
+                dos = new DataOutputStream(conn.getOutputStream());
+
+                // --- Write File Part ---
+                dos.writeBytes(twoHyphens + boundary + lineEnd);
+                dos.writeBytes("Content-Disposition: form-data; name=\"file\";filename=\"" + fileName + "\"" + lineEnd);
+                dos.writeBytes("Content-Type: " + mimeType + lineEnd);
+                dos.writeBytes(lineEnd);
+
+                // --- Write File Content ---
+                byte[] buffer = new byte[maxBufferSize];
+                int bytesRead;
+                while ((bytesRead = fileInputStream.read(buffer)) != -1) {
+                    dos.write(buffer, 0, bytesRead);
+                }
+                dos.flush();
+
+                // --- Write End Boundary ---
+                dos.writeBytes(lineEnd);
+                dos.writeBytes(twoHyphens + boundary + twoHyphens + lineEnd);
+                dos.flush();
+
+                // --- Get Server Response ---
+                int serverResponseCode = conn.getResponseCode();
+                String serverResponseMessage = conn.getResponseMessage();
+                Log.i(TAG, "Upload Server Response: " + serverResponseCode + " " + serverResponseMessage);
+                String responseBody = readServerResponse(conn, serverResponseCode); // Helper to read response
+
+                Log.i(TAG, "Upload Server Response: " + serverResponseCode + " " + serverResponseMessage);
+                Log.d(TAG, "Upload Response Body: " + responseBody);
+
+
+                // --- Update UI on Main Thread ---
+                final boolean success = (serverResponseCode >= 200 && serverResponseCode < 300);
+                final String statusMessage = success ? "Upload successful!" : ("Upload failed: " + serverResponseCode);
+                final String toastMessage = success ? ("Uploaded: " + fileName) : ("Upload failed (" + serverResponseCode + ")" + (!responseBody.isEmpty() ? ": "+ responseBody : ""));
+
+                mainThreadHandler.post(() -> {
+                    updateStatus(statusMessage); // Show final status
+                    progressBarUpload.setVisibility(View.GONE);
+                    Toast.makeText(MainActivity.this, toastMessage, success ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
+                    updateUIState(); // Re-enable UI elements
+                });
+
+                // --- Cleanup uploaded file (Optional) ---
+                if (success && !"file".equals(fileUri.getScheme())) { // Don't delete MediaStore entries typically
+                    // boolean deleted = deleteUriFile(fileUri);
+                    // Log.i(TAG, "Deleted uploaded file (" + fileName + "): " + deleted);
+                } else if (success && "file".equals(fileUri.getScheme())) { // Delete local app file (audio/text)
+                    try {
+                        File uploadedFile = new File(fileUri.getPath());
+                        if(uploadedFile.exists()){
+                            boolean deleted = uploadedFile.delete();
+                            Log.i(TAG, "Deleted uploaded local file (" + fileName + "): " + deleted);
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error deleting local uploaded file: " + fileName, e);
+                    }
+                }
+
+
+            } catch (FileNotFoundException e) {
+                Log.e(TAG, "File Not Found for upload: " + fileUri, e);
+                updateUiOnError("Upload Error: File not found.");
+            } catch (MalformedURLException e) {
+                Log.e(TAG, "URL error for upload: " + UPLOAD_URL, e);
+                updateUiOnError("Upload Error: Invalid server URL.");
+            } catch (IOException e) {
+                Log.e(TAG, "IO Exception during upload for " + fileName + ": " + e.getMessage(), e);
+                updateUiOnError("Upload Error: Connection/Server issue.");
+
+            } catch (Exception e) {
+                Log.e(TAG, "Unexpected error during upload for " + fileName, e);
+                updateUiOnError("Upload Error: Unexpected issue.");
+            } finally {
+                // --- Close streams and connection ---
+                try { if (fileInputStream != null) fileInputStream.close(); } catch (IOException e) { /* ignore */ }
+                try { if (dos != null) dos.close(); } catch (IOException e) { /* ignore */ }
+                if (conn != null) conn.disconnect();
+                Log.d(TAG, "Upload task finished for: " + fileName);
+                // Ensure UI is re-enabled even if error happened before final UI update block
+                mainThreadHandler.post(this::updateUIState);
+                mainThreadHandler.post(()-> { if(progressBarUpload != null) progressBarUpload.setVisibility(View.GONE);});
+            }
+        }); // End of uploadExecutor.execute
+    }
+
+    // Helper to read response body from connection
+    private String readServerResponse(HttpURLConnection conn, int responseCode) {
+        InputStream responseStream = null;
+        String responseBody = "";
+        try {
+            if (responseCode >= 200 && responseCode < 400) {
+                responseStream = conn.getInputStream();
+            } else {
+                responseStream = conn.getErrorStream();
+            }
+            if (responseStream != null) {
+                java.util.Scanner s = new java.util.Scanner(responseStream).useDelimiter("\\A");
+                responseBody = s.hasNext() ? s.next() : "";
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "Error reading server response stream", e);
+        } finally {
+            if (responseStream != null) try { responseStream.close(); } catch (IOException e) { /* ignore */ }
+        }
+        return responseBody;
+    }
+
+
+    // --- File & URI Utilities ---
+
+    private String getFileName(Uri uri) {
+        // Implementation from previous response - handles content and file URIs
+        String result = null;
+        if (uri == null) return "unknown_file";
+        if (ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) {
+            try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                    if (nameIndex >= 0) result = cursor.getString(nameIndex);
+                }
+            } catch (Exception e) {Log.e(TAG, "Error getting file name from content URI: " + uri, e);}
+        }
+        if (result == null) {
+            result = uri.getPath();
+            if (result != null) {
+                int cut = result.lastIndexOf('/');
+                if (cut != -1) result = result.substring(cut + 1);
+            }
+        }
+        return result != null ? result : "unknown_file_" + System.currentTimeMillis();
+    }
+
+
+    private String getMimeType(Uri uri) {
+        // Implementation from previous response - uses ContentResolver first, then extension
+        if (uri == null) return "application/octet-stream";
+        ContentResolver cR = getContentResolver();
+        String type = cR.getType(uri);
+        if (type == null || type.equals("application/octet-stream")) {
+            String fileName = getFileName(uri);
+            String fileExtension = MimeTypeMap.getFileExtensionFromUrl(fileName);
+            if (fileExtension != null) {
+                String extensionMimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(fileExtension.toLowerCase());
+                if (extensionMimeType != null) type = extensionMimeType;
+            }
+        }
+        // Provide sensible defaults if still unknown
+        if (type == null || type.equals("application/octet-stream")){
+            String lowerName = getFileName(uri).toLowerCase();
+            if (lowerName.endsWith(".txt")) return "text/plain";
+            if (lowerName.endsWith(".aac")) return "audio/aac"; // Match MediaRecorder output
+            if (lowerName.endsWith(".mp4")) return "video/mp4";
+            if (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg")) return "image/jpeg";
+            if (lowerName.endsWith(".png")) return "image/png";
+        }
+        return (type != null) ? type : "application/octet-stream";
+    }
+
+
+    // Helper to update UI consistently on background task errors before upload response
+    private void updateUiOnError(String message) {
+        mainThreadHandler.post(() -> {
+            updateStatus(message);
+            if(progressBarUpload != null) progressBarUpload.setVisibility(View.GONE);
+            Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+            updateUIState(); // Re-enable controls
+        });
+    }
+
+    // Helper to shut down executors
+    private void shutdownExecutor(ExecutorService executor, String name) {
+        if (executor != null && !executor.isShutdown()) {
+            try {
+                executor.shutdown();
+                Log.i(TAG, name + " shutdown requested.");
+            } catch (Exception e) {
+                Log.e(TAG, "Error shutting down " + name, e);
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    // --- End of MainActivity ---
+}

@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layout_marginTop="120dp"
+    android:padding="16dp"
+    tools:context=".MainActivity"> <FrameLayout
+    android:id="@+id/preview_frame"
+    android:layout_width="0dp"
+    android:layout_height="0dp"
+    app:layout_constraintDimensionRatio="1:1"
+    app:layout_constraintEnd_toEndOf="parent"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintTop_toTopOf="parent"
+    app:layout_constraintWidth_max="300dp"
+    app:layout_constraintHeight_max="300dp"
+    app:layout_constraintWidth_percent="0.7" >
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/preview_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:scaleType="fillCenter" />
+
+</FrameLayout>
+
+
+
+    <ImageButton
+        android:id="@+id/button_capture_image"
+        style="?attr/imageButtonStyle"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:contentDescription="Capture Image"
+        android:src="@android:drawable/ic_menu_camera"
+        app:layout_constraintEnd_toStartOf="@id/button_start_video"
+        app:layout_constraintTop_toBottomOf="@+id/preview_frame"
+        app:layout_constraintStart_toStartOf="@+id/preview_frame"
+        app:layout_constraintHorizontal_chainStyle="packed"/>
+
+    <ImageButton
+        android:id="@+id/button_start_video"
+        style="?attr/imageButtonStyle"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:contentDescription="Start/Stop Video Recording"
+        android:src="@android:drawable/presence_video_online"
+        app:layout_constraintEnd_toEndOf="@+id/preview_frame"
+        app:layout_constraintTop_toBottomOf="@+id/preview_frame"
+        app:layout_constraintStart_toEndOf="@+id/button_capture_image"/>
+
+
+    <com.google.android.material.switchmaterial.SwitchMaterial
+        android:id="@+id/switch_video_audio"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Audio"
+        android:textColor="@color/text_color_secondary"
+        android:textSize="12sp"
+        android:checked="true"
+        app:layout_constraintEnd_toEndOf="@+id/button_start_video"
+        app:layout_constraintTop_toBottomOf="@+id/button_start_video" />
+
+    <ImageButton
+        android:id="@+id/button_record_audio"
+        style="?attr/imageButtonStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:contentDescription="Start/Stop Audio Recording"
+        android:src="@android:drawable/ic_btn_speak_now"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/switch_video_audio"
+        app:layout_constraintEnd_toStartOf="@+id/guideline_vertical"/>
+
+    <EditText
+        android:id="@+id/edittext_text_input"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:hint="Enter text to upload"
+        android:inputType="textMultiLine"
+        android:lines="3"
+        android:gravity="top"
+        android:background="@drawable/edit_text_border"
+        android:padding="8dp"
+        android:textColor="@color/text_color_primary"
+        android:textColorHint="@color/text_color_secondary"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/button_record_audio" />
+
+    <Button
+        android:id="@+id/button_send_text"
+        style="?attr/materialButtonStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Send Text"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/edittext_text_input" />
+
+    <TextView
+        android:id="@+id/textview_status"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:gravity="center"
+        android:text="Status: Initializing..."
+        android:textAppearance="?android:attr/textAppearanceSmall"
+        android:textColor="@color/text_color_secondary"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/button_send_text"
+        app:layout_constraintBottom_toTopOf="@+id/progress_bar_upload"/>
+
+    <ProgressBar
+        android:id="@+id/progress_bar_upload"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:indeterminate="true"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        tools:visibility="visible" />
+
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/guideline_vertical"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        app:layout_constraintGuide_percent="0.5" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

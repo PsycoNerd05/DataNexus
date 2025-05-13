@@ -1,0 +1,12 @@
+package com.datanexus.datanexus_backend;
+
+import com.datanexus.datanexus_backend.DataEntry;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository // Marks this as a Spring Data repository
+public interface DataEntryRepository extends JpaRepository<DataEntry, Long> {
+    // Spring Data JPA automatically provides methods like save(), findById(), findAll(), deleteById() etc.
+    // You can add custom query methods here if needed later.
+    // Example: List<DataEntry> findByFileType(String fileType);
+}

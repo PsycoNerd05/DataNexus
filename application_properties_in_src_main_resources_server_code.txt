@@ -1,0 +1,48 @@
+spring.application.name=datanexus_backend
+# ==========================
+# DATABASE CONFIGURATION
+# ==========================
+# MySQL Connection URL (use data_nexus_db you created)
+spring.datasource.url=jdbc:mysql://localhost:3306/data_nexus_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+# MySQL Username (the user you created, e.g., datanexus_admin or datanexus_user)
+spring.datasource.username=datanexus_admin
+# MySQL Password (the password you set for the user)
+spring.datasource.password=admin
+
+# JDBC Driver
+spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
+
+# ==========================
+# JPA/HIBERNATE CONFIGURATION
+# ==========================
+# Show SQL statements in console
+spring.jpa.show-sql=true
+# Hibernate dialect for MySQL 8+
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQLDialect
+# Hibernate DDL Auto (VERY IMPORTANT):
+# 'validate': Checks if schema matches entities, fails on mismatch (Safest for existing schema)
+# 'update': Attempts to update schema based on entities (Use with caution in dev)
+# 'create': Drops and recreates schema on startup (Loses all data!)
+# 'create-drop': Creates schema on startup, drops on shutdown (Loses all data!)
+# 'none': Does nothing to the schema (Recommended for production)
+# Use 'validate' since you created the table manually
+spring.jpa.hibernate.ddl-auto=validate
+
+# ==========================
+# FILE STORAGE CONFIGURATION
+# ==========================
+# Define the directory on your laptop where uploaded files will be saved
+# IMPORTANT: Create this directory manually!
+# Windows Example: file.upload-dir=C:/data_nexus_uploads
+# macOS/Linux Example: file.upload-dir=/Users/your_username/data_nexus_uploads
+file.upload-dir=C:\Users\Krrish Rebba\OneDrive\Desktop\DataNexus\
+
+# ==========================
+# MULTIPART (FILE UPLOAD) CONFIGURATION
+# ==========================
+# Maximum size for a single file (e.g., 10MB, 100MB, 1GB)
+spring.servlet.multipart.max-file-size=100MB
+# Maximum size for the total request (might include multiple files or other form data)
+spring.servlet.multipart.max-request-size=105MB
+# Enable multipart handling
+spring.servlet.multipart.enabled=true

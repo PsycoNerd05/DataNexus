@@ -1,0 +1,77 @@
+package com.datanexus.datanexus_backend;
+import jakarta.persistence.*; // Use jakarta.persistence for Spring Boot 3+
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+
+import java.time.LocalDateTime;
+
+@Entity // Marks this class as a JPA entity
+@Table(name = "data_entries") // Maps to the specific table name
+@Data // Lombok: Generates getters, setters, toString, equals, hashCode
+@NoArgsConstructor // Lombok: Generates no-args constructor needed by JPA
+public class DataEntry {
+
+    @Id // Marks this field as the primary key
+    @GeneratedValue(strategy = GenerationType.IDENTITY) // Auto-increment ID
+    private Long id;
+
+    @Column(nullable = false) // Corresponds to table column, not nullable
+    private String filename;
+
+    @Column(name = "file_type") // Explicitly map column name if different from field name
+    private String fileType;
+
+    @Column(name = "storage_path", nullable = false, length = 1024)
+    private String storagePath;
+
+    @Lob // For potentially large text data
+    @Column(columnDefinition = "TEXT") // Ensure TEXT type in DB for metadata
+    private String metadata; // Optional metadata (e.g., JSON)
+
+    @Column(name = "source_device")
+    private String sourceDevice;
+
+    @CreationTimestamp // Automatically set timestamp when entity is created
+    @Column(name = "upload_timestamp", nullable = false, updatable = false)
+    private LocalDateTime uploadTimestamp;
+    
+    public Long getId() { return id; }
+    // No setId for auto-generated ID
+
+    public String getFilename() { return filename; }
+    public void setFilename(String filename) { this.filename = filename; }
+
+    public String getFileType() { return fileType; }
+    public void setFileType(String fileType) { this.fileType = fileType; }
+
+    public String getStoragePath() { return storagePath; }
+    public void setStoragePath(String storagePath) { this.storagePath = storagePath; }
+
+    public String getMetadata() { return metadata; }
+    public void setMetadata(String metadata) { this.metadata = metadata; }
+
+    public String getSourceDevice() { return sourceDevice; }
+    public void setSourceDevice(String sourceDevice) { this.sourceDevice = sourceDevice; }
+
+    public LocalDateTime getUploadTimestamp() { return uploadTimestamp; }
+    
+    public void setId(Long id) { // Setter for Integer
+        this.id = id;
+    }
+
+    // Constructor for creating new entries (optional, Lombok handles basics)
+    public DataEntry(String filename, String fileType, String storagePath) {
+        this.filename = filename;
+        this.fileType = fileType;
+        this.storagePath = storagePath;
+        // Timestamp is handled by @CreationTimestamp
+    }
+    public DataEntry() {
+        // Default no-argument constructor required by JPA/Hibernate
+    }
+
+	
+
+    // Lombok @Data generates getters/setters automatically
+}

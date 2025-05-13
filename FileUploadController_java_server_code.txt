@@ -1,0 +1,77 @@
+package com.datanexus.datanexus_backend;
+
+import com.datanexus.datanexus_backend.DataEntry;
+import com.datanexus.datanexus_backend.DataEntryRepository;
+import com.datanexus.datanexus_backend.FileStorageService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.nio.file.Path;
+
+@RestController // Marks this as a controller where every method returns a domain object instead of a view
+@RequestMapping("/") // Base path for this controller (optional)
+public class FileUploadController {
+
+    private static final Logger logger = LoggerFactory.getLogger(FileUploadController.class);
+
+    private final FileStorageService fileStorageService;
+    private final DataEntryRepository dataEntryRepository;
+
+    // Constructor injection for dependencies (recommended)
+    public FileUploadController(FileStorageService fileStorageService, DataEntryRepository dataEntryRepository) {
+        this.fileStorageService = fileStorageService;
+        this.dataEntryRepository = dataEntryRepository;
+    }
+
+    @PostMapping("/upload") // Handles POST requests to /upload
+    public ResponseEntity<String> handleFileUpload(@RequestParam("file") MultipartFile file, String storedDeviceID) {
+        // @RequestParam("file") must match the name used in the mobile app's multipart request
+
+        if (file.isEmpty()) {
+            logger.warn("Received empty file upload request.");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Please select a file to upload.");
+        }
+
+        logger.info("Received file: Name={}, Size={}, Type={}",
+                file.getOriginalFilename(), file.getSize(), file.getContentType());
+
+        try {
+            // 1. Store the file using the service
+            String storedFileName = fileStorageService.storeFile(file);
+            Path storagePath = fileStorageService.getUploadPath().resolve(storedFileName);
+
+            // 2. Create DataEntry entity to save metadata
+            DataEntry dataEntry = new DataEntry(storedFileName,file.getContentType(),storagePath.toString());
+            dataEntry.setId(null); // Explicitly set to null
+            dataEntry.setSourceDevice(storedDeviceID); // Could add device ID if sent from mobile app
+            // dataEntry.setMetadata(...); // Could add other metadata if sent
+
+            // 3. Save metadata to the database
+            dataEntryRepository.save(dataEntry);
+            logger.info("Saved metadata to DB for file: {}", storedFileName);
+
+            // 4. Return success response
+            return ResponseEntity.ok("File uploaded successfully: " + file.getOriginalFilename() + " (saved as " + storedFileName + ")");
+
+        } catch (IOException e) {
+            logger.error("Failed to upload file {}: {}", file.getOriginalFilename(), e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Could not upload the file: " + file.getOriginalFilename() + "! " + e.getMessage());
+        } catch (Exception e) {
+             logger.error("An unexpected error occurred during upload for file {}", file.getOriginalFilename(), e);
+             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("An unexpected error occurred during upload.");
+        }
+    }
+    @GetMapping("/api/test-connection")
+    public String testConnection() {
+        return "Connection successful!";
+    }
+
+    // Optional: Add GET endpoints later to retrieve file info or files
+}
